@@ -1,0 +1,214 @@
+/*
+ * 预览组件样式 —— 规则：本文件中的颜色只能来自 var(--t-*) 令牌变量。
+ * 令牌变量由依赖图解析后注入 .preview-scope，任何硬编码颜色都会被
+ * src/theme/preview-css.test.ts 拦截。布局尺寸（px/圆角等）不受此限。
+ */
+
+.preview-scope {
+  background: var(--t-surface-page);
+  color: var(--t-text-primary);
+  min-height: 100%;
+  padding: 24px 28px 48px;
+  font-size: 14px;
+  line-height: 1.6;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.pv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+  max-width: 1080px;
+  margin: 0 auto;
+}
+
+.pv-card {
+  background: var(--t-surface-card);
+  border: 1px solid var(--t-border-default);
+  border-radius: 12px;
+  padding: 18px 20px;
+}
+
+.pv-card--wide {
+  grid-column: 1 / -1;
+}
+
+.pv-h {
+  margin: 0 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--t-text-secondary);
+}
+
+.pv-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+/* ---------- 按钮 ---------- */
+
+.btn {
+  font: inherit;
+  font-weight: 500;
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.btn-primary {
+  background: var(--t-action-primary-bg);
+  color: var(--t-action-primary-text);
+}
+.btn-primary:hover,
+.preview-scope[data-sim='hover'] .btn-primary {
+  background: var(--t-action-primary-bg-hover);
+}
+.btn-primary:disabled,
+.preview-scope[data-sim='disabled'] .btn-primary {
+  background: var(--t-action-primary-bg-disabled);
+  color: var(--t-action-primary-text-disabled);
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: var(--t-action-secondary-bg);
+  color: var(--t-action-secondary-text);
+  border-color: var(--t-action-secondary-border);
+}
+.btn-secondary:hover,
+.preview-scope[data-sim='hover'] .btn-secondary {
+  background: var(--t-action-secondary-bg-hover);
+}
+.btn-secondary:disabled,
+.preview-scope[data-sim='disabled'] .btn-secondary {
+  background: var(--t-action-secondary-bg-disabled);
+  color: var(--t-action-secondary-text-disabled);
+  border-color: var(--t-action-secondary-border-disabled);
+  cursor: not-allowed;
+}
+
+.btn-danger {
+  background: var(--t-action-danger-bg);
+  color: var(--t-action-danger-text);
+}
+.btn-danger:hover,
+.preview-scope[data-sim='hover'] .btn-danger {
+  background: var(--t-action-danger-bg-hover);
+}
+.btn-danger:disabled,
+.preview-scope[data-sim='disabled'] .btn-danger {
+  background: var(--t-action-danger-bg-disabled);
+  color: var(--t-action-danger-text-disabled);
+  cursor: not-allowed;
+}
+
+/* ---------- 文本 ---------- */
+
+.pv-title {
+  margin: 0 0 8px;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--t-text-primary);
+}
+
+.pv-body {
+  margin: 0 0 8px;
+  color: var(--t-text-primary);
+}
+
+.pv-secondary {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--t-text-secondary);
+}
+
+.pv-link {
+  color: var(--t-text-link);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.pv-link:hover,
+.preview-scope[data-sim='hover'] .pv-link {
+  color: var(--t-text-link-hover);
+}
+
+/* ---------- 表单 ---------- */
+
+.pv-field {
+  font: inherit;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--t-field-border);
+  background: var(--t-field-bg);
+  color: var(--t-field-text);
+  margin-bottom: 10px;
+}
+.pv-field::placeholder {
+  color: var(--t-field-placeholder);
+}
+.pv-field:focus {
+  outline: 2px solid var(--t-focus-ring);
+  outline-offset: 1px;
+  border-color: var(--t-focus-ring);
+}
+.pv-field:disabled,
+.preview-scope[data-sim='disabled'] .pv-field {
+  background: var(--t-field-bg-disabled);
+  color: var(--t-field-text-disabled);
+  cursor: not-allowed;
+}
+
+/* ---------- 反馈 ---------- */
+
+.pv-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--t-badge-bg);
+  color: var(--t-badge-text);
+}
+
+.pv-alert {
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-top: 10px;
+  font-size: 14px;
+}
+
+.pv-alert-warning {
+  background: var(--t-alert-warning-bg);
+  color: var(--t-alert-warning-text);
+  border: 1px solid var(--t-alert-warning-border);
+}
+
+.pv-alert-info {
+  background: var(--t-info-bg);
+  color: var(--t-info-text);
+}
+
+/* ---------- 卡片内分隔 ---------- */
+
+.pv-divider {
+  height: 1px;
+  background: var(--t-border-default);
+  margin: 14px 0;
+}
+
+.pv-muted-surface {
+  background: var(--t-surface-muted);
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: var(--t-text-secondary);
+  font-size: 13px;
+}

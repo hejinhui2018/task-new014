@@ -193,7 +193,116 @@ export function resolveColor(
   return resolveAll(doc, theme).colors.get(token);
 }
 
-/** 来源链：从某令牌一路走到基础令牌（或错误），供「查看来源」使用 */
+/**
+ * 来源树：把令牌真实的依赖分支完整展开。
+ *
+ * 与单链 sourceChain 不同，mix 会展开「主输入 + 混合对象」两支，
+ * 共享依赖只在第一次完整展开、之后以 shared 叶子标记；
+ * 沿当前展开路径再次遇到同一令牌时标记为循环回边。
+ * 任何分支都不会无限递归。
+ */
+export interface SourceBranch {
+  /** 在父令牌中的角色：根 / 主输入 / mix 第二输入 */
+  role: 'root' | 'primary' | 'other';
+  token: string;
+  /** 令牌在当前主题下实际生效的定义（缺失令牌时为占位 ref） */
+  value: TokenValue;
+  color?: string;
+  error?: ResolveError;
+  /** 深色主题下该令牌是否有独立深色覆盖；false 表示继承浅色定义 */
+  overridden: boolean;
+  /** 依赖分支：mix 两支，ref/lighten/darken 一支，字面值为空 */
+  children: SourceBranch[];
+  /** 已在树的更早处展开过（共享依赖或循环回边），children 不再重复 */
+  shared: boolean;
+}
+
+/** 该令牌在深色主题下是否有独立覆盖定义 */
+export function hasDarkOverride(doc: ThemeDocument, token: string): boolean {
+  return doc.dark.base[token] !== undefined || doc.dark.semantic[token] !== undefined;
+}
+
+/** 构建来源树：完整展示引用、调亮/调暗与 mix 双输入的真实依赖分支 */
+export function sourceTree(
+  doc: ThemeDocument,
+  theme: ThemeMode,
+  token: string,
+): SourceBranch {
+  const resolution = resolveAll(doc, theme);
+  /** 已完整展开过的令牌（跨分支共享依赖去重） */
+  const expanded = new Set<string>();
+
+  const isOverridden = (name: string) => theme === 'dark' && hasDarkOverride(doc, name);
+
+  function makeBranch(
+    name: string,
+    role: SourceBranch['role'],
+    /** 从根到当前分支父节点的路径，用于识别循环回边 */
+    ancestors: Set<string>,
+  ): SourceBranch {
+    const value = valueFor(doc, theme, name);
+    const branch: SourceBranch = {
+      role,
+      token: name,
+      value: value ?? { kind: 'ref', token: '' },
+      overridden: isOverridden(name),
+      children: [],
+      shared: false,
+    };
+    const err = resolution.errors.get(name);
+    if (err) branch.error = err;
+    else branch.color = resolution.colors.get(name);
+
+    // 缺失令牌：叶子 + 缺失错误
+    if (!value) {
+      branch.error = { kind: 'missing', detail: name };
+      return branch;
+    }
+    // 循环回边：沿当前路径回到了链上的令牌
+    if (ancestors.has(name)) {
+      const path: string[] = [];
+      let started = false;
+      for (const ancestor of ancestors) {
+        if (ancestor === name) started = true;
+        if (started) path.push(ancestor);
+      }
+      branch.error = { kind: 'cycle', detail: [...path, name].join(' → ') };
+      branch.shared = true;
+      return branch;
+    }
+    // 共享依赖：别的分支已展开过，只保留可点击的标记节点
+    if (expanded.has(name)) {
+      branch.shared = true;
+      return branch;
+    }
+
+    expanded.add(name);
+
+    // 字面值（基础令牌）：登记后作为终点，再次被引用时显示为共享
+    if (value.kind === 'color') return branch;
+
+    const nextAncestors = new Set(ancestors);
+    nextAncestors.add(name);
+
+    const depInputs: Array<[string, SourceBranch['role']]> =
+      value.kind === 'ref'
+        ? [[value.token, 'primary']]
+        : value.op === 'mix'
+          ? [
+              [value.token, 'primary'],
+              [value.other ?? '', 'other'],
+            ]
+          : [[value.token, 'primary']];
+    branch.children = depInputs.map(([dep, depRole]) =>
+      makeBranch(dep, depRole, nextAncestors),
+    );
+    return branch;
+  }
+
+  return makeBranch(token, 'root', new Set());
+}
+
+/** 来源链：从某令牌沿主输入一路走到基础令牌（或错误），供「查看来源」使用 */
 export interface ChainStep {
   token: string;
   value: TokenValue;

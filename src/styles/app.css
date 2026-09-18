@@ -438,6 +438,44 @@ button:disabled {
   padding: 0;
 }
 
+.tree,
+.tree-children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tree-children {
+  position: relative;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  position: relative;
+}
+
+.tree-children > li > .tree-row::before {
+  content: '└';
+  position: absolute;
+  left: -2px;
+  color: var(--chrome-muted);
+  font-size: 10px;
+  opacity: 0.6;
+}
+
+.branch-role {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--chrome-panel-2);
+  color: var(--chrome-muted);
+}
+
 .chain li {
   display: flex;
   align-items: center;
@@ -490,6 +528,33 @@ button:disabled {
   border-radius: 4px;
   background: var(--chrome-panel);
   color: var(--chrome-muted);
+}
+
+.inherit-mark,
+.shared-mark {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.inherit-dark {
+  background: rgba(96, 165, 250, 0.14);
+  color: var(--chrome-accent);
+}
+
+.inherit-light {
+  background: var(--chrome-panel);
+  color: var(--chrome-muted);
+}
+
+.shared-mark {
+  background: var(--chrome-panel-2);
+  color: var(--chrome-muted);
+}
+
+.chain-token-empty {
+  color: var(--chrome-danger);
 }
 
 .chip-list {

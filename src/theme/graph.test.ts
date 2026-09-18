@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { darkenHex, mixHex } from './color';
+import { darkenHex, lightenHex, mixHex } from './color';
 import {
   buildGraph,
   buildCssText,
@@ -10,10 +10,12 @@ import {
   resolveAll,
   resolveColor,
   sourceChain,
+  sourceTree,
   wouldCreateCycle,
+  type SourceBranch,
 } from './graph';
 import { brokenScenario, defaultScenario } from './presets';
-import type { ThemeDocument } from './types';
+import type { ThemeDocument, TokenValue } from './types';
 
 const doc = defaultScenario.doc;
 
@@ -137,5 +139,174 @@ describe('主题覆盖', () => {
     const dark = resolveColor(doc, 'dark', 'badge.bg')!;
     expect(light).not.toBe(dark);
     expect(dark).toBe(mixHex('#2563eb', '#1e293b', 0.88));
+  });
+});
+
+function withSemantic(d: ThemeDocument, token: string, value: TokenValue): ThemeDocument {
+  return { ...d, semantic: { ...d.semantic, [token]: value } };
+}
+
+function flatten(branch: SourceBranch): SourceBranch[] {
+  return [branch, ...branch.children.flatMap(flatten)];
+}
+
+function findBranch(root: SourceBranch, token: string): SourceBranch | undefined {
+  return flatten(root).find((b) => b.token === token);
+}
+
+describe('来源树：真实依赖分支', () => {
+  it('旧单链来源链看不到 mix 第二支（记录被修复的缺陷）', () => {
+    const chain = sourceChain(doc, 'light', 'action.primary.bg.disabled');
+    expect(chain.map((s) => s.token)).not.toContain('surface.page');
+  });
+
+  it('mix 展开主输入与混合对象两支，颜色与各分支一致', () => {
+    const root = sourceTree(doc, 'light', 'action.primary.bg.disabled');
+    expect(root.token).toBe('action.primary.bg.disabled');
+    expect(root.children.map((b) => b.role)).toEqual(['primary', 'other']);
+    expect(root.children.map((b) => b.token)).toEqual([
+      'action.primary.bg',
+      'surface.page',
+    ]);
+
+    const all = flatten(root);
+    // 两支各自一路追溯到基础令牌
+    expect(findBranch(root, 'blue.600')?.color).toBe('#2563eb');
+    expect(findBranch(root, 'gray.50')?.color).toBe('#f8fafc');
+    // 混合对象 surface.page 此前在来源区完全缺失
+    expect(all.some((b) => b.token === 'surface.page')).toBe(true);
+    // 分支颜色与解析结果逐节点一致
+    const resolution = resolveAll(doc, 'light');
+    for (const b of all) {
+      if (!b.error) expect(b.color).toBe(resolution.colors.get(b.token));
+    }
+    expect(root.color).toBe(
+      mixHex('#2563eb', resolution.colors.get('surface.page')!, 0.75),
+    );
+  });
+
+  it('调亮/调暗只有主输入一支并继续追溯', () => {
+    const root = sourceTree(doc, 'light', 'action.primary.bg.hover');
+    expect(root.children).toHaveLength(1);
+    expect(root.children[0].role).toBe('primary');
+    expect(flatten(root).map((b) => b.token)).toEqual([
+      'action.primary.bg.hover',
+      'action.primary.bg',
+      'blue.600',
+    ]);
+    expect(root.color).toBe(darkenHex('#2563eb', 0.08));
+
+    // 深色下的调亮：surface.muted = lighten(surface.page, 4%)
+    const dark = sourceTree(doc, 'dark', 'surface.muted');
+    expect(dark.children[0].token).toBe('surface.page');
+    expect(dark.color).toBe(lightenHex('#0f172a', 0.04));
+  });
+
+  it('深色下标注覆盖与继承，且跟随实际生效的定义', () => {
+    const root = sourceTree(doc, 'dark', 'action.primary.bg.disabled');
+    // disabled 本身在深色未覆盖 → 继承浅色的 mix 定义
+    expect(root.overridden).toBe(false);
+    expect(root.value).toEqual(doc.semantic['action.primary.bg.disabled']);
+    // 主输入 action.primary.bg 同样继承浅色，落到 blue.600
+    const primary = root.children.find((b) => b.role === 'primary')!;
+    expect(primary.token).toBe('action.primary.bg');
+    expect(primary.overridden).toBe(false);
+    expect(findBranch(primary, 'blue.600')?.color).toBe('#2563eb');
+    // 混合对象 surface.page 是深色覆盖，落到 gray.900（改深色页面底色会影响这一支）
+    const other = root.children.find((b) => b.role === 'other')!;
+    expect(other.token).toBe('surface.page');
+    expect(other.overridden).toBe(true);
+    expect(other.color).toBe('#0f172a');
+    expect(findBranch(other, 'gray.900')?.color).toBe('#0f172a');
+    expect(root.color).toBe(mixHex('#2563eb', '#0f172a', 0.75));
+  });
+
+  it('修改深色页面底色后，混合对象分支显示新值', () => {
+    const next: ThemeDocument = {
+      ...doc,
+      dark: { ...doc.dark, base: { ...doc.dark.base, 'gray.900': '#111111' } },
+    };
+    const root = sourceTree(next, 'dark', 'action.primary.bg.disabled');
+    const other = root.children.find((b) => b.role === 'other')!;
+    expect(other.color).toBe('#111111');
+    expect(findBranch(other, 'gray.900')?.color).toBe('#111111');
+    expect(root.color).toBe(mixHex('#2563eb', '#111111', 0.75));
+  });
+
+  it('mix 第二输入缺失时指出具体分支，且与诊断一致、不卡死', () => {
+    const broken = withSemantic(doc, 'mix.missing.other', {
+      kind: 'transform',
+      op: 'mix',
+      token: 'blue.600',
+      amount: 0.5,
+      // 故意没有 other
+    });
+    const resolution = resolveAll(broken, 'light');
+    expect(resolution.errors.get('mix.missing.other')?.kind).toBe('missing');
+
+    const root = sourceTree(broken, 'light', 'mix.missing.other');
+    expect(root.error?.kind).toBe('missing');
+    expect(root.children).toHaveLength(2);
+    // 主输入正常
+    const primary = root.children.find((b) => b.role === 'primary')!;
+    expect(primary.token).toBe('blue.600');
+    expect(primary.error).toBeUndefined();
+    // 第二输入分支明确标出缺失，而不是让整棵树看起来正常
+    const other = root.children.find((b) => b.role === 'other')!;
+    expect(other.token).toBe('');
+    expect(other.error?.kind).toBe('missing');
+  });
+
+  it('缺失引用在分支节点与目标节点都可见', () => {
+    const root = sourceTree(brokenScenario.doc, 'light', 'field.border');
+    expect(root.error?.kind).toBe('missing');
+    const missing = root.children[0];
+    expect(missing.token).toBe('gray.250');
+    expect(missing.error?.kind).toBe('missing');
+    expect(missing.children).toEqual([]);
+  });
+
+  it('循环依赖标记回边分支、有限终止，且环成员仍可点击定位', () => {
+    const root = sourceTree(brokenScenario.doc, 'light', 'info.bg');
+    const nodes = flatten(root);
+    // info.bg → info.text → 回到 info.bg
+    expect(nodes.map((b) => b.token)).toEqual(['info.bg', 'info.text', 'info.bg']);
+    const backEdge = nodes[2];
+    expect(backEdge.shared).toBe(true);
+    expect(backEdge.error?.kind).toBe('cycle');
+    expect(backEdge.error?.detail).toBe('info.bg → info.text → info.bg');
+    expect(backEdge.children).toEqual([]);
+    // 令牌名保留在节点上，列表中仍可点击
+    expect(nodes.every((b) => b.token !== '' || b.error?.kind === 'missing')).toBe(true);
+  });
+
+  it('共享依赖只展开一次，第二次以可点击的共享标记出现', () => {
+    const shared = withSemantic(
+      withSemantic(
+        withSemantic(doc, 'diamond.b', { kind: 'ref', token: 'blue.600' }),
+        'diamond.c',
+        { kind: 'ref', token: 'blue.600' },
+      ),
+      'diamond.a',
+      { kind: 'transform', op: 'mix', token: 'diamond.b', other: 'diamond.c', amount: 0.5 },
+    );
+    const root = sourceTree(shared, 'light', 'diamond.a');
+    const blueNodes = flatten(root).filter((b) => b.token === 'blue.600');
+    expect(blueNodes).toHaveLength(2);
+    expect(blueNodes[0].shared).toBe(false);
+    expect(blueNodes[0].children).toEqual([]); // 基础令牌本就是叶子
+    expect(blueNodes[1].shared).toBe(true);
+    expect(blueNodes[1].children).toEqual([]);
+    // 两个节点都带着令牌名，可点击定位
+    expect(blueNodes.every((b) => b.token === 'blue.600')).toBe(true);
+  });
+
+  it('默认主题两个模式下来源树都无错误节点且有限', () => {
+    for (const theme of ['light', 'dark'] as const) {
+      for (const name of ['action.primary.bg.disabled', 'badge.bg', 'action.secondary.bg.hover']) {
+        const nodes = flatten(sourceTree(doc, theme, name));
+        expect(nodes.every((b) => !b.error)).toBe(true);
+      }
+    }
   });
 });

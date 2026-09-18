@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   dependentsOf,
-  sourceChain,
+  sourceTree,
   valueFor,
   type Resolution,
+  type SourceBranch,
 } from '../theme/graph';
 import {
   makeSetBase,
@@ -13,6 +14,7 @@ import {
 } from '../theme/store';
 import {
   describeValue,
+  type ThemeMode,
   type TokenValue,
   type TransformOp,
 } from '../theme/types';
@@ -47,7 +49,7 @@ export function TokenEditor({
   const resolvedColor = resolution.colors.get(token);
   const resolvedError = resolution.errors.get(token);
 
-  const chain = useMemo(() => sourceChain(doc, theme, token), [doc, theme, token]);
+  const tree = useMemo(() => sourceTree(doc, theme, token), [doc, theme, token]);
   const deps = useMemo(() => dependentsOf(doc, theme, token), [doc, theme, token]);
 
   const baseNames = useMemo(() => Object.keys(doc.base), [doc.base]);
@@ -153,30 +155,14 @@ export function TokenEditor({
         )}
       </div>
 
-      {/* 来源链 */}
+      {/* 来源链：按真实依赖分支展开（mix 显示双输入） */}
       <div className="editor-section">
-        <h4>来源链</h4>
-        <ol className="chain">
-          {chain.map((step, i) => (
-            <li key={`${step.token}-${i}`} className={step.error ? 'chain-error' : ''}>
-              <span
-                className={`swatch swatch-sm ${step.error ? 'swatch-error' : ''}`}
-                style={step.error ? undefined : { background: step.color }}
-              />
-              <button className="chain-token" onClick={() => onSelect(step.token)}>
-                {step.token}
-              </button>
-              <span className="chain-value">{describeValue(step.value)}</span>
-              {step.color && <code className="chain-hex">{step.color}</code>}
-              {step.error && (
-                <span className="err-text">{step.error.kind === 'cycle' ? '循环' : '缺失'}</span>
-              )}
-              {i === chain.length - 1 && !step.error && step.value.kind === 'color' && (
-                <span className="chain-base-mark">基础</span>
-              )}
-            </li>
-          ))}
-        </ol>
+        <h4>
+          来源链 <span className="hint">含全部依赖分支，点击令牌可定位</span>
+        </h4>
+        <ul className="tree">
+          <BranchNodes branch={tree} depth={0} theme={theme} onSelect={onSelect} />
+        </ul>
       </div>
 
       {/* 依赖者 */}
@@ -330,5 +316,90 @@ export function TokenEditor({
         )}
       </div>
     </div>
+  );
+}
+
+const ROLE_LABEL: Partial<Record<SourceBranch['role'], string>> = {
+  primary: '主输入',
+  other: '混合对象',
+};
+
+/** 递归渲染来源树的一个分支（含其全部子分支） */
+function BranchNodes({
+  branch,
+  depth,
+  theme,
+  roleLabel,
+  onSelect,
+}: {
+  branch: SourceBranch;
+  depth: number;
+  theme: ThemeMode;
+  /** 该分支在父令牌中的角色标签（仅 mix 两支需要） */
+  roleLabel?: string;
+  onSelect: (token: string) => void;
+}) {
+  const isMixParent = branch.value.kind === 'transform' && branch.value.op === 'mix';
+  const isBaseLeaf = branch.value.kind === 'color' && !branch.error;
+  return (
+    <li>
+      <div
+        className={`tree-row ${branch.error ? 'chain-error' : ''}`}
+        style={{ paddingLeft: depth * 16 + 8 }}
+      >
+        {roleLabel && <span className="branch-role">{roleLabel}</span>}
+        <span
+          className={`swatch swatch-sm ${branch.error ? 'swatch-error' : ''}`}
+          style={branch.error ? undefined : { background: branch.color }}
+        />
+        {branch.token ? (
+          <button className="chain-token" onClick={() => onSelect(branch.token)}>
+            {branch.token}
+          </button>
+        ) : (
+          <code className="chain-token chain-token-empty">（未选择令牌）</code>
+        )}
+        <span className="chain-value">
+          {branch.token === '' && branch.error?.kind === 'missing'
+            ? 'mix 缺少第二个输入令牌'
+            : describeValue(branch.value)}
+        </span>
+        {branch.color && <code className="chain-hex">{branch.color}</code>}
+        {theme === 'dark' && !branch.error && (
+          <span
+            className={`inherit-mark ${branch.overridden ? 'inherit-dark' : 'inherit-light'}`}
+            title={branch.overridden ? '该令牌在深色主题有独立覆盖' : '该令牌继承浅色主题定义'}
+          >
+            {branch.overridden ? '深色覆盖' : '继承浅色'}
+          </span>
+        )}
+        {branch.shared && !branch.error && (
+          <span className="shared-mark" title="同一令牌被多个分支引用，只展开一次">
+            共享
+          </span>
+        )}
+        {branch.error && (
+          <span className="err-text">
+            {branch.error.kind === 'cycle' ? '循环' : '缺失'}
+            {branch.shared ? '回边' : ''}
+          </span>
+        )}
+        {isBaseLeaf && <span className="chain-base-mark">基础</span>}
+      </div>
+      {!branch.shared && branch.children.length > 0 && (
+        <ul className="tree-children">
+          {branch.children.map((child, i) => (
+            <BranchNodes
+              key={`${child.role}-${child.token || 'empty'}-${i}`}
+              branch={child}
+              depth={depth + 1}
+              theme={theme}
+              roleLabel={isMixParent ? ROLE_LABEL[child.role] : undefined}
+              onSelect={onSelect}
+            />
+          ))}
+        </ul>
+      )}
+    </li>
   );
 }

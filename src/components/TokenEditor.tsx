@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   dependentsOf,
-  sourceChain,
+  sourceTree,
+  walkChainTree,
   valueFor,
+  type ChainBranch,
   type Resolution,
 } from '../theme/graph';
 import {
@@ -33,6 +35,77 @@ const OP_LABEL: Record<TransformOp, string> = {
   mix: '混合 mix',
 };
 
+/** mix 分支角色标签；单输入（引用 / 调亮调暗）不打标签，只用连线表达 */
+function roleLabel(parent: ChainBranch, child: ChainBranch): string | undefined {
+  if (parent.value?.kind !== 'transform' || parent.value.op !== 'mix') return undefined;
+  return child.role === 'other' ? '混合对象' : '主输入';
+}
+
+interface SourceBranchProps {
+  branch: ChainBranch;
+  depth: number;
+  baseNames: Set<string>;
+  onSelect: (token: string) => void;
+}
+
+/** 递归渲染一条来源分支及其子分支（mix 有两个子分支） */
+function SourceBranch({ branch, depth, baseNames, onSelect }: SourceBranchProps) {
+  const isMix = branch.value?.kind === 'transform' && branch.value.op === 'mix';
+  const isBaseLeaf =
+    !branch.error && branch.value?.kind === 'color' && branch.token !== undefined && baseNames.has(branch.token);
+
+  const tokenName = branch.token;
+  return (
+    <li className={`chain-node ${branch.error ? 'chain-error' : ''}`}>
+      <div className="chain-row" style={{ paddingLeft: depth * 18 }}>
+        <span
+          className={`swatch swatch-sm ${branch.error ? 'swatch-error' : ''}`}
+          style={branch.error ? undefined : { background: branch.color }}
+        />
+        {tokenName ? (
+          <button className="chain-token" onClick={() => onSelect(tokenName)}>
+            {tokenName}
+          </button>
+        ) : (
+          <span className="chain-missing-name">（未选择令牌）</span>
+        )}
+
+        {branch.value && <span className="chain-value">{describeValue(branch.value)}</span>}
+        {branch.color && <code className="chain-hex">{branch.color}</code>}
+
+        {branch.overridden && <span className="chain-scope chain-scope-over">深色覆盖</span>}
+        {branch.inherited && <span className="chain-scope">继承浅色</span>}
+        {branch.shared && !branch.error && (
+          <span className="chain-shared" title="该令牌已在树中展开，这里复用同一来源">
+            共享
+          </span>
+        )}
+        {isBaseLeaf && <span className="chain-base-mark">基础</span>}
+        {branch.error && (
+          <span className="err-text" title={branch.error.detail}>
+            {branch.error.kind === 'cycle' ? '循环' : '缺失'}
+            {!branch.token ? `：${branch.error.detail}` : ''}
+          </span>
+        )}
+      </div>
+
+      {branch.children.length > 0 && (
+        <ul className={`chain-branch ${isMix ? 'chain-branch-mix' : ''}`}>
+          {branch.children.map((child, i) => {
+            const label = roleLabel(branch, child);
+            return (
+              <li key={`${child.token ?? 'missing'}-${i}`} className="chain-slot">
+                {label && <span className={`chain-role chain-role-${child.role}`}>{label}</span>}
+                <SourceBranch branch={child} depth={depth + 1} baseNames={baseNames} onSelect={onSelect} />
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </li>
+  );
+}
+
 export function TokenEditor({
   state,
   dispatch,
@@ -47,10 +120,18 @@ export function TokenEditor({
   const resolvedColor = resolution.colors.get(token);
   const resolvedError = resolution.errors.get(token);
 
-  const chain = useMemo(() => sourceChain(doc, theme, token), [doc, theme, token]);
+  const tree = useMemo(() => sourceTree(doc, theme, token), [doc, theme, token]);
+  const branchCount = useMemo(() => {
+    let n = 0;
+    walkChainTree(tree, () => {
+      n += 1;
+    });
+    return n;
+  }, [tree]);
   const deps = useMemo(() => dependentsOf(doc, theme, token), [doc, theme, token]);
 
   const baseNames = useMemo(() => Object.keys(doc.base), [doc.base]);
+  const baseNameSet = useMemo(() => new Set(baseNames), [baseNames]);
   const semanticNames = useMemo(
     () => [...new Set([...Object.keys(doc.semantic), ...Object.keys(doc.dark.semantic)])],
     [doc.semantic, doc.dark.semantic],
@@ -155,28 +236,12 @@ export function TokenEditor({
 
       {/* 来源链 */}
       <div className="editor-section">
-        <h4>来源链</h4>
-        <ol className="chain">
-          {chain.map((step, i) => (
-            <li key={`${step.token}-${i}`} className={step.error ? 'chain-error' : ''}>
-              <span
-                className={`swatch swatch-sm ${step.error ? 'swatch-error' : ''}`}
-                style={step.error ? undefined : { background: step.color }}
-              />
-              <button className="chain-token" onClick={() => onSelect(step.token)}>
-                {step.token}
-              </button>
-              <span className="chain-value">{describeValue(step.value)}</span>
-              {step.color && <code className="chain-hex">{step.color}</code>}
-              {step.error && (
-                <span className="err-text">{step.error.kind === 'cycle' ? '循环' : '缺失'}</span>
-              )}
-              {i === chain.length - 1 && !step.error && step.value.kind === 'color' && (
-                <span className="chain-base-mark">基础</span>
-              )}
-            </li>
-          ))}
-        </ol>
+        <h4>
+          来源链 <span className="hint">共 {branchCount} 个令牌分支</span>
+        </h4>
+        <ul className="chain chain-tree">
+          <SourceBranch branch={tree} depth={0} baseNames={baseNameSet} onSelect={onSelect} />
+        </ul>
       </div>
 
       {/* 依赖者 */}

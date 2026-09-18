@@ -193,43 +193,107 @@ export function resolveColor(
   return resolveAll(doc, theme).colors.get(token);
 }
 
-/** 来源链：从某令牌一路走到基础令牌（或错误），供「查看来源」使用 */
-export interface ChainStep {
-  token: string;
-  value: TokenValue;
+/**
+ * 来源树：从某令牌展开它真实依赖的各个分支，供「查看来源」使用。
+ *
+ * 与早期线性 sourceChain 的区别：
+ *  - 引用、调亮/调暗产生一个 primary 分支；
+ *  - mix 产生两个分支（primary 主输入 + other 混合对象），缺一不可，
+ *    因此修改任一侧（如深色页面底色）都能在来源区看到对应分支；
+ *  - 共享依赖只在第一次完整展开，再次出现标记 shared，既指出该分支
+ *    又避免菱形依赖下的重复与死循环；
+ *  - 缺失引用 / 循环依赖标在「出问题的那一个分支」上，而不是让整棵树
+ *    看起来正常。
+ */
+export interface ChainBranch {
+  /** 该分支相对父变换的角色：根 / 主输入 / 混合对象 */
+  role: 'root' | 'primary' | 'other';
+  /** 分支指向的令牌；mix 缺少第二输入时为 undefined（悬空分支） */
+  token?: string;
+  /** 该令牌在当前主题下实际生效的定义（已含深色覆盖 / 浅色继承回落） */
+  value?: TokenValue;
+  /** 解析后的颜色，直接取自 resolveAll，与预览/对比度同源 */
   color?: string;
+  /** 该分支的解析错误（缺失引用 / 循环依赖 / 第二输入缺失） */
   error?: ResolveError;
+  /** 该令牌是回到祖先（循环）或已在树的其他位置展开过（共享依赖） */
+  shared?: boolean;
+  /** 深色主题下该令牌有显式覆盖（否则继承浅色定义） */
+  overridden?: boolean;
+  /** 深色主题下该令牌未覆盖、实际生效的是浅色定义 */
+  inherited?: boolean;
+  /** 继续向下的依赖分支 */
+  children: ChainBranch[];
 }
 
-export function sourceChain(
+function isDarkOverridden(doc: ThemeDocument, name: string): boolean {
+  return doc.dark.base[name] !== undefined || doc.dark.semantic[name] !== undefined;
+}
+
+/** 构建某令牌在当前主题下的真实来源树 */
+export function sourceTree(
   doc: ThemeDocument,
   theme: ThemeMode,
   token: string,
-): ChainStep[] {
+): ChainBranch {
   const resolution = resolveAll(doc, theme);
-  const steps: ChainStep[] = [];
-  const seen = new Set<string>();
-  let current: string | undefined = token;
-  while (current !== undefined) {
-    const value = valueFor(doc, theme, current);
-    if (!value) {
-      steps.push({
-        token: current,
-        value: { kind: 'ref', token: '' },
-        error: { kind: 'missing', detail: current },
-      });
-      break;
+  const ancestors = new Set<string>(); // 当前 DFS 路径，用于识别回到祖先的环
+  const expanded = new Set<string>(); // 已在树中完整展开的令牌，用于共享去重
+
+  function build(name: string | undefined, role: ChainBranch['role']): ChainBranch {
+    // mix 的第二输入未选择：悬空分支，明确指出是这一支缺失
+    if (name === undefined || name === '') {
+      return {
+        role,
+        token: name || undefined,
+        error: { kind: 'missing', detail: '第二输入缺失（未选择令牌）' },
+        children: [],
+      };
     }
-    const step: ChainStep = { token: current, value };
-    const err = resolution.errors.get(current);
-    if (err) step.error = err;
-    else step.color = resolution.colors.get(current);
-    steps.push(step);
-    if (value.kind === 'color' || seen.has(current)) break;
-    seen.add(current);
-    current = value.kind === 'ref' || value.kind === 'transform' ? value.token : undefined;
+
+    const value = valueFor(doc, theme, name);
+    if (!value) {
+      return { role, token: name, error: { kind: 'missing', detail: name }, children: [] };
+    }
+
+    const branch: ChainBranch = { role, token: name, value, children: [] };
+    const err = resolution.errors.get(name);
+    if (err) branch.error = err;
+    else branch.color = resolution.colors.get(name);
+    if (theme === 'dark') {
+      if (isDarkOverridden(doc, name)) branch.overridden = true;
+      else branch.inherited = true;
+    }
+
+    // 回到祖先（环）或已在别处展开（共享依赖）：标注后不再下钻，保证不死循环、不重复
+    if (ancestors.has(name) || expanded.has(name)) {
+      branch.shared = true;
+      return branch;
+    }
+
+    ancestors.add(name);
+    if (value.kind === 'ref') {
+      branch.children = [build(value.token, 'primary')];
+    } else if (value.kind === 'transform') {
+      branch.children = [build(value.token, 'primary')];
+      if (value.op === 'mix') branch.children.push(build(value.other, 'other'));
+    }
+    ancestors.delete(name);
+    expanded.add(name);
+    return branch;
   }
-  return steps;
+
+  return build(token, 'root');
+}
+
+/** 遍历来源树（深度优先），便于测试与统计 */
+export function walkChainTree(
+  branch: ChainBranch,
+  visit: (branch: ChainBranch, depth: number) => void,
+  depth = 0,
+): void {
+  visit(branch, depth);
+  for (const child of branch.children) walkChainTree(child, visit, depth + 1);
 }
 
 /** 把 token 的值替换为 value 后，是否会形成循环依赖（用于编辑时拒绝） */
